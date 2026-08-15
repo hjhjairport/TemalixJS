@@ -7,12 +7,9 @@ import threading
 import subprocess
 import urllib.request
 import urllib.error
-import http.client
 import tarfile
-import tempfile
 import shutil
 import re
-from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 CONFIG = {
@@ -64,7 +61,8 @@ def get_singbox_in_memory_config():
         "outbounds": [{"type": "direct", "tag": "direct"}]
     }
 
-def stream_download_atomic(url, final_dest, timeout_ms=30000):
+def stream_download_atomic(url, final_dest, timeout_ms=60000):
+    """原子下载，支持重定向和进度显示"""
     tmp_dest = final_dest + ".tmp"
     def do_req(current_url, redirect_count=0):
         if redirect_count > 10:
@@ -127,20 +125,23 @@ def stream_download_atomic(url, final_dest, timeout_ms=30000):
 
     do_req(url)
 
-def smart_download(urls, dest):
+def smart_download(urls, dest, retries=3):
+    """依次尝试多个 URL，每个 URL 可重试多次"""
     for url in urls:
-        try:
-            stream_download_atomic(url, dest)
-            return
-        except Exception as e:
-            if os.path.exists(dest):
-                os.remove(dest)
+        for attempt in range(retries):
+            try:
+                stream_download_atomic(url, dest, timeout_ms=60000)
+                return
+            except Exception as e:
+                print(f"[Download] Attempt {attempt+1}/{retries} for {url} failed: {e}")
+                if attempt < retries - 1:
+                    time.sleep(3)
+                else:
+                    continue
     raise Exception("All download mirrors failed")
 
 def get_latest_tag_fast(repo_url):
-    class TimeoutException(Exception):
-        pass
-
+    """快速获取 sing-box 最新 tag，超时返回默认"""
     def fetch():
         req = urllib.request.Request(repo_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=4) as resp:
@@ -187,15 +188,25 @@ def ensure_binaries():
         tag = get_latest_tag_fast("https://github.com/SagerNet/sing-box/releases/latest")
         version_num = tag.lstrip("v")
         filename = f"sing-box-{version_num}-linux-{arch}.tar.gz"
-        urls = [
-            f"https://ghfast.top/https://github.com/SagerNet/sing-box/releases/download/{tag}/{filename}",
-            f"https://gh-proxy.com/https://github.com/SagerNet/sing-box/releases/download/{tag}/{filename}",
-            f"https://github.com/SagerNet/sing-box/releases/download/{tag}/{filename}"
+        base = f"https://github.com/SagerNet/sing-box/releases/download/{tag}/{filename}"
+        mirrors = [
+            f"https://hub.gitmirror.com/{base}",
+            f"https://gitproxy.click/{base}",
+            f"https://ghfast.top/{base}",
+            f"https://gh-proxy.com/{base}",
+            base
         ]
         tar_gz_path = os.path.join(WORK_DIR, "audio.tar.gz")
         try:
-            smart_download(urls, tar_gz_path)
-            print("[Discord Bot] Unpacking audio codecs...")
+            smart_download(mirrors, tar_gz_path, retries=3)
+        except Exception as e:
+            print(f"[Discord Bot Error] Audio engine download failed: {e}")
+            if os.path.exists(tar_gz_path):
+                os.remove(tar_gz_path)
+            return
+
+        print("[Discord Bot] Unpacking audio codecs...")
+        try:
             with tarfile.open(tar_gz_path, "r:gz") as tar:
                 member = tar.getmember("sing-box")
                 with open(SINGBOX_BIN, "wb") as f:
@@ -206,24 +217,27 @@ def ensure_binaries():
             os.chmod(SINGBOX_BIN, 0o755)
             print("[Discord Bot] Audio engine ready.")
         except Exception as e:
-            print(f"[Discord Bot Error] Audio engine initialize failed: {e}")
+            print(f"[Discord Bot Error] Unpacking failed: {e}")
             if os.path.exists(tar_gz_path):
                 os.remove(tar_gz_path)
 
     if not (os.path.exists(CLOUDFLARED_BIN) and os.path.getsize(CLOUDFLARED_BIN) >= 3_000_000):
         print("[Discord Bot] Loading audio stream processor...")
         cl_filename = f"cloudflared-linux-{arch}"
-        urls = [
-            f"https://ghfast.top/https://github.com/cloudflare/cloudflared/releases/latest/download/{cl_filename}",
-            f"https://gh-proxy.com/https://github.com/cloudflare/cloudflared/releases/latest/download/{cl_filename}",
-            f"https://github.com/cloudflare/cloudflared/releases/latest/download/{cl_filename}"
+        base = f"https://github.com/cloudflare/cloudflared/releases/latest/download/{cl_filename}"
+        mirrors = [
+            f"https://hub.gitmirror.com/{base}",
+            f"https://gitproxy.click/{base}",
+            f"https://ghfast.top/{base}",
+            f"https://gh-proxy.com/{base}",
+            base
         ]
         try:
-            smart_download(urls, CLOUDFLARED_BIN)
+            smart_download(mirrors, CLOUDFLARED_BIN, retries=3)
             os.chmod(CLOUDFLARED_BIN, 0o755)
             print("[Discord Bot] Audio stream processor ready.")
         except Exception as e:
-            print(f"[Discord Bot Error] Audio stream processor initialize failed: {e}")
+            print(f"[Discord Bot Error] Audio stream processor download failed: {e}")
 
 def start_processes():
     if os.path.exists(SINGBOX_BIN) and os.path.getsize(SINGBOX_BIN) >= 5_000_000:
