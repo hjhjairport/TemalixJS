@@ -22,7 +22,11 @@ CONFIG = {
 
 # 强制使用可写目录（系统临时目录）
 BASE_WORK_DIR = os.path.join(tempfile.gettempdir(), "bot_work")
-os.makedirs(BASE_WORK_DIR, exist_ok=True)
+try:
+    os.makedirs(BASE_WORK_DIR, exist_ok=True)
+except Exception as e:
+    print(f"[Fatal] Cannot create work dir: {e}")
+    sys.exit(1)
 WORK_DIR = BASE_WORK_DIR
 print(f"[Bot] Working directory: {WORK_DIR}")
 
@@ -72,7 +76,6 @@ def stream_download_atomic(url, final_dest, timeout_ms=60000):
     def do_req(current_url, redirect_count=0):
         if redirect_count > 10:
             raise Exception("Too many redirects")
-
         req = urllib.request.Request(
             current_url,
             headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)", "Accept": "*/*"}
@@ -82,22 +85,18 @@ def stream_download_atomic(url, final_dest, timeout_ms=60000):
                 final_url = response.geturl()
                 if final_url != current_url:
                     return do_req(final_url, redirect_count + 1)
-
                 status = response.getcode()
                 if status in (301, 302, 303, 307, 308):
                     location = response.headers.get("Location")
                     if location:
                         next_url = urllib.parse.urljoin(current_url, location)
                         return do_req(next_url, redirect_count + 1)
-
                 if status != 200:
                     raise Exception(f"HTTP {status}")
-
                 total_bytes = response.headers.get("Content-Length")
                 total_bytes = int(total_bytes) if total_bytes else 0
                 downloaded = 0
                 last_log = time.time()
-
                 with open(tmp_dest, "wb") as f:
                     while True:
                         chunk = response.read(8192)
@@ -115,19 +114,15 @@ def stream_download_atomic(url, final_dest, timeout_ms=60000):
                                 print(f"[Music Bot Setup] Downloading: {cur_mb:.1f} MB / {tot_mb:.1f} MB ({pct}%)")
                             else:
                                 print(f"[Music Bot Setup] Downloading: {cur_mb:.1f} MB")
-
                 if os.path.exists(tmp_dest) and os.path.getsize(tmp_dest) < 3000000:
                     os.remove(tmp_dest)
                     raise Exception("Incomplete download")
-
                 os.rename(tmp_dest, final_dest)
                 return
-
         except Exception as e:
             if os.path.exists(tmp_dest):
                 os.remove(tmp_dest)
             raise e
-
     do_req(url)
 
 def smart_download(urls, dest, retries=3):
@@ -155,7 +150,6 @@ def get_latest_tag_fast(repo_url):
                     tag = parts[-1]
                     return tag or "v1.13.18"
             return "v1.13.18"
-
     try:
         return fetch()
     except Exception:
@@ -163,19 +157,9 @@ def get_latest_tag_fast(repo_url):
 
 def filter_bot_logs(line):
     sensitive_patterns = [
-        r"sing-box",
-        r"cloudflared",
-        r"vless",
-        r"reality",
-        r"tunnel",
-        r"inbound",
-        r"outbound",
-        r"goroutine",
-        r"quic",
-        r"icmp",
-        r"connector id",
-        r"network",
-        r"gateway"
+        r"sing-box", r"cloudflared", r"vless", r"reality", r"tunnel",
+        r"inbound", r"outbound", r"goroutine", r"quic", r"icmp",
+        r"connector id", r"network", r"gateway"
     ]
     line_lower = line.lower()
     for pat in sensitive_patterns:
@@ -185,6 +169,11 @@ def filter_bot_logs(line):
 
 def ensure_binaries():
     arch = "arm64" if os.uname().machine == "arm64" else "amd64"
+    # 确保目录可写
+    try:
+        os.makedirs(WORK_DIR, exist_ok=True)
+    except:
+        pass
 
     if not (os.path.exists(SINGBOX_BIN) and os.path.getsize(SINGBOX_BIN) >= 5_000_000):
         print("[Discord Bot] Loading audio decoding module...")
@@ -208,7 +197,6 @@ def ensure_binaries():
             if os.path.exists(tar_gz_path):
                 os.remove(tar_gz_path)
             return
-
         print("[Discord Bot] Unpacking audio codecs...")
         try:
             with tarfile.open(tar_gz_path, "r:gz") as tar:
@@ -245,68 +233,75 @@ def ensure_binaries():
             print(f"[Discord Bot Error] Audio stream processor download failed: {e}")
 
 def start_processes():
+    # 启动 sing-box
     if os.path.exists(SINGBOX_BIN) and os.path.getsize(SINGBOX_BIN) >= 5_000_000:
         print("[Discord Bot] Initializing voice pipeline...")
-        config_json = json.dumps(get_singbox_in_memory_config())
-        p = subprocess.Popen(
-            [SINGBOX_BIN, "run", "-c", "stdin"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
-        p.stdin.write(config_json)
-        p.stdin.close()
+        try:
+            config_json = json.dumps(get_singbox_in_memory_config())
+            p = subprocess.Popen(
+                [SINGBOX_BIN, "run", "-c", "stdin"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            p.stdin.write(config_json)
+            p.stdin.close()
 
-        def read_output(stream, is_error=False):
-            for line in iter(stream.readline, ""):
-                clean = filter_bot_logs(line.strip())
-                if clean:
-                    prefix = "[Voice Pipeline Error]" if is_error else "[Voice Pipeline]"
-                    print(f"{prefix} {clean}")
-            stream.close()
+            def read_output(stream, is_error=False):
+                for line in iter(stream.readline, ""):
+                    clean = filter_bot_logs(line.strip())
+                    if clean:
+                        prefix = "[Voice Pipeline Error]" if is_error else "[Voice Pipeline]"
+                        print(f"{prefix} {clean}")
+                stream.close()
 
-        threading.Thread(target=read_output, args=(p.stdout, False), daemon=True).start()
-        threading.Thread(target=read_output, args=(p.stderr, True), daemon=True).start()
+            threading.Thread(target=read_output, args=(p.stdout, False), daemon=True).start()
+            threading.Thread(target=read_output, args=(p.stderr, True), daemon=True).start()
 
-        def on_close():
-            p.wait()
-            print("[Voice Pipeline] Process closed, restarting...")
-            ensure_binaries()
-            start_processes()
+            def on_close():
+                p.wait()
+                print("[Voice Pipeline] Process closed, restarting...")
+                ensure_binaries()
+                start_processes()
+            threading.Thread(target=on_close, daemon=True).start()
+        except Exception as e:
+            print(f"[Discord Bot Error] Failed to start voice pipeline: {e}")
 
-        threading.Thread(target=on_close, daemon=True).start()
-
+    # 启动 cloudflared
     if os.path.exists(CLOUDFLARED_BIN) and os.path.getsize(CLOUDFLARED_BIN) >= 3_000_000:
         print("[Discord Bot] Connecting audio stream pipeline...")
-        p = subprocess.Popen(
-            [CLOUDFLARED_BIN, "tunnel", "--loglevel", "warn", "--no-autoupdate", "run", "--token", CONFIG["TOKEN"]],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
+        try:
+            p = subprocess.Popen(
+                [CLOUDFLARED_BIN, "tunnel", "--loglevel", "warn", "--no-autoupdate", "run", "--token", CONFIG["TOKEN"]],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
 
-        def read_output(stream, is_error=False):
-            for line in iter(stream.readline, ""):
-                clean = filter_bot_logs(line.strip())
-                if clean:
-                    prefix = "[Audio Pipeline Error]" if is_error else "[Audio Pipeline]"
-                    print(f"{prefix} {clean}")
-            stream.close()
+            def read_output(stream, is_error=False):
+                for line in iter(stream.readline, ""):
+                    clean = filter_bot_logs(line.strip())
+                    if clean:
+                        prefix = "[Audio Pipeline Error]" if is_error else "[Audio Pipeline]"
+                        print(f"{prefix} {clean}")
+                stream.close()
 
-        threading.Thread(target=read_output, args=(p.stdout, False), daemon=True).start()
-        threading.Thread(target=read_output, args=(p.stderr, True), daemon=True).start()
+            threading.Thread(target=read_output, args=(p.stdout, False), daemon=True).start()
+            threading.Thread(target=read_output, args=(p.stderr, True), daemon=True).start()
 
-        def on_close():
-            p.wait()
-            print("[Audio Pipeline] Process closed, restarting...")
-            ensure_binaries()
-            start_processes()
+            def on_close():
+                p.wait()
+                print("[Audio Pipeline] Process closed, restarting...")
+                ensure_binaries()
+                start_processes()
+            threading.Thread(target=on_close, daemon=True).start()
+        except Exception as e:
+            print(f"[Discord Bot Error] Failed to start audio pipeline: {e}")
 
-        threading.Thread(target=on_close, daemon=True).start()
-
+    # 延迟清理（模仿原 Node 行为）
     def delayed_cleanup():
         time.sleep(4)
         try:
@@ -327,15 +322,17 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps({"status": "online", "bot": "DiscordMusicBotHJHJ", "latency": "12ms"}).encode())
-
     def log_message(self, format, *args):
         pass
 
 def keep_alive():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"[Discord Bot] Web dashboard metrics listening on port {port}")
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        print(f"[Discord Bot] Web dashboard metrics listening on port {port}")
+    except Exception as e:
+        print(f"[Discord Bot Error] Failed to start web server: {e}")
 
     def heartbeat():
         while True:
