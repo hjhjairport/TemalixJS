@@ -20,10 +20,11 @@ CONFIG = {
     "HOSTNAME": "temalix.hjhjct.dpdns.org"
 }
 
-# 使用系统临时目录作为工作目录（保证可写）
+# 强制使用可写目录（系统临时目录）
 BASE_WORK_DIR = os.path.join(tempfile.gettempdir(), "bot_work")
 os.makedirs(BASE_WORK_DIR, exist_ok=True)
 WORK_DIR = BASE_WORK_DIR
+print(f"[Bot] Working directory: {WORK_DIR}")
 
 SINGBOX_BIN = os.path.join(WORK_DIR, "audio-core")
 CLOUDFLARED_BIN = os.path.join(WORK_DIR, "discord-music-bot")
