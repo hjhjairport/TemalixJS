@@ -8,6 +8,7 @@ import subprocess
 import urllib.request
 import urllib.error
 import tarfile
+import tempfile
 import shutil
 import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -19,7 +20,11 @@ CONFIG = {
     "HOSTNAME": "temalix.hjhjct.dpdns.org"
 }
 
-WORK_DIR = os.path.dirname(os.path.abspath(__file__))
+# 使用系统临时目录作为工作目录（保证可写）
+BASE_WORK_DIR = os.path.join(tempfile.gettempdir(), "bot_work")
+os.makedirs(BASE_WORK_DIR, exist_ok=True)
+WORK_DIR = BASE_WORK_DIR
+
 SINGBOX_BIN = os.path.join(WORK_DIR, "audio-core")
 CLOUDFLARED_BIN = os.path.join(WORK_DIR, "discord-music-bot")
 
@@ -62,7 +67,6 @@ def get_singbox_in_memory_config():
     }
 
 def stream_download_atomic(url, final_dest, timeout_ms=60000):
-    """原子下载，支持重定向和进度显示"""
     tmp_dest = final_dest + ".tmp"
     def do_req(current_url, redirect_count=0):
         if redirect_count > 10:
@@ -126,7 +130,6 @@ def stream_download_atomic(url, final_dest, timeout_ms=60000):
     do_req(url)
 
 def smart_download(urls, dest, retries=3):
-    """依次尝试多个 URL，每个 URL 可重试多次"""
     for url in urls:
         for attempt in range(retries):
             try:
@@ -141,7 +144,6 @@ def smart_download(urls, dest, retries=3):
     raise Exception("All download mirrors failed")
 
 def get_latest_tag_fast(repo_url):
-    """快速获取 sing-box 最新 tag，超时返回默认"""
     def fetch():
         req = urllib.request.Request(repo_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=4) as resp:
@@ -194,6 +196,7 @@ def ensure_binaries():
             f"https://gitproxy.click/{base}",
             f"https://ghfast.top/{base}",
             f"https://gh-proxy.com/{base}",
+            f"https://gh.api.99988866.xyz/{base}",
             base
         ]
         tar_gz_path = os.path.join(WORK_DIR, "audio.tar.gz")
@@ -230,6 +233,7 @@ def ensure_binaries():
             f"https://gitproxy.click/{base}",
             f"https://ghfast.top/{base}",
             f"https://gh-proxy.com/{base}",
+            f"https://gh.api.99988866.xyz/{base}",
             base
         ]
         try:
