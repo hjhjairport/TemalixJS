@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, json, time, threading, subprocess, urllib.request, tarfile, tempfile, shutil, re
+import os, sys, json, time, threading, subprocess, urllib.request, tarfile, shutil, re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 CONFIG = {
@@ -9,25 +9,10 @@ CONFIG = {
     "HOSTNAME": "temalix.hjhjct.dpdns.org"
 }
 
-# 寻找可写工作目录
-WORK_DIR = None
-for d in [tempfile.gettempdir(), ".", "/var/tmp"]:
-    try:
-        dpath = os.path.join(d, "bot_work")
-        os.makedirs(dpath, exist_ok=True)
-        testfile = os.path.join(dpath, "write_test")
-        with open(testfile, "w") as f: f.write("test")
-        os.remove(testfile)
-        WORK_DIR = dpath
-        break
-    except:
-        continue
-
-if WORK_DIR is None:
-    print("[Fatal] No writable directory found. Exiting.")
-    sys.exit(1)
-
+WORK_DIR = os.path.join(os.getcwd(), "bot_work")
+os.makedirs(WORK_DIR, exist_ok=True)
 print(f"[Bot] Working directory: {WORK_DIR}")
+
 SINGBOX_BIN = os.path.join(WORK_DIR, "audio-core")
 CLOUDFLARED_BIN = os.path.join(WORK_DIR, "discord-music-bot")
 
@@ -117,7 +102,6 @@ def filter_bot_logs(line):
 def ensure_binaries():
     arch = "arm64" if os.uname().machine == "arm64" else "amd64"
 
-    # sing-box
     if not (os.path.exists(SINGBOX_BIN) and os.path.getsize(SINGBOX_BIN) >= 5_000_000):
         print("[Discord Bot] Loading audio decoding module...")
         tag = get_latest_tag_fast()
@@ -143,7 +127,6 @@ def ensure_binaries():
             print(f"[Discord Bot Error] Unpacking failed: {e}")
             if os.path.exists(tar_gz): os.remove(tar_gz)
 
-    # cloudflared
     if not (os.path.exists(CLOUDFLARED_BIN) and os.path.getsize(CLOUDFLARED_BIN) >= 3_000_000):
         print("[Discord Bot] Loading audio stream processor...")
         cfname = f"cloudflared-linux-{arch}"
